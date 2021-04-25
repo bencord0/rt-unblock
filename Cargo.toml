@@ -7,3 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-channel = "1.6.1"
+async-std = {version = "1.9.0", features = ["attributes"]}
+event-listener = "2.5.1"
+smol-timeout = "0.6.0"

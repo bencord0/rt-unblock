@@ -48,14 +48,22 @@ impl State {
     }
 
     pub async fn run(&self) {
+        while let Ok(new_value) = self.rx.recv().await {
+            // Acquire write access
+            self.value.store(new_value, Ordering::SeqCst);
+
+            // mischief managed
+            self.done.notify(usize::MAX);
+        }
+    }
+
+    pub async fn run_once(&self) {
         if let Ok(new_value) = self.rx.recv().await {
             // Acquire write access
             self.value.store(new_value, Ordering::SeqCst);
 
             // mischief managed
             self.done.notify(usize::MAX);
-        } else {
-            println!("No value on channel");
         }
     }
 
@@ -141,7 +149,7 @@ mod tests {
         assert!(!state.has_updated());
 
         // wait for asynchronous work
-        task::block_on(state.run());
+        task::block_on(state.run_once());
 
         done.wait();
         assert!(state.has_updated());

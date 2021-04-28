@@ -3,7 +3,7 @@ use core::{
     task::{Context, Poll},
     pin::Pin,
 };
-use async_channel::{self as channel, Sender, Receiver};
+use async_channel::{self as channel, Sender, Receiver, TrySendError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use event_listener::{Event, EventListener};
 use smol_timeout::{Timeout, TimeoutExt};
@@ -11,15 +11,8 @@ use std::time::Duration;
 
 type Value = bool;
 
-pub struct State {
-    value: AtomicBool,
-    done: Event,
-    tx: Sender<Value>,
-    rx: Receiver<Value>,
-}
-
 enum UpdateFuture {
-    Error(async_channel::TrySendError<Value>),
+    Error(TrySendError<Value>),
     Done(Timeout<EventListener>),
 }
 
@@ -30,13 +23,13 @@ impl UpdateFuture {
         )
     }
 
-    fn error(senderr: async_channel::TrySendError<Value>) -> Self {
+    fn error(senderr: TrySendError<Value>) -> Self {
         Self::Error(senderr)
     }
 }
 
 impl Future for UpdateFuture {
-    type Output = Result<(), async_channel::TrySendError<Value>>;
+    type Output = Result<(), TrySendError<Value>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
         -> Poll<Self::Output>
@@ -58,6 +51,13 @@ impl Future for UpdateFuture {
     }
 }
 
+pub struct State {
+    value: AtomicBool,
+    done: Event,
+    tx: Sender<Value>,
+    rx: Receiver<Value>,
+}
+
 impl State {
     pub fn new() -> Self {
         let (tx, rx) = channel::bounded(1);
@@ -75,12 +75,12 @@ impl State {
     }
 
     pub fn try_update(&self, value: Value)
-        -> Result<(), async_channel::TrySendError<Value>>
+        -> Result<(), TrySendError<Value>>
     {
         self.tx.try_send(value)
     }
 
-    pub fn update(&self, value: Value) -> impl Future<Output=Result<(), async_channel::TrySendError<Value>>> {
+    pub fn update(&self, value: Value) -> impl Future<Output=Result<(), TrySendError<Value>>> {
         let done = self.done.listen();
         if let Err(senderr) = self.tx.try_send(value) {
             println!("unable to update: {}", senderr);

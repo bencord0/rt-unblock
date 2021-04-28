@@ -18,48 +18,43 @@ pub struct State {
     rx: Receiver<Value>,
 }
 
-struct UpdateFuture {
-    error: Option<async_channel::TrySendError<Value>>,
-    done: Option<Timeout<EventListener>>,
+enum UpdateFuture {
+    Error(async_channel::TrySendError<Value>),
+    Done(Timeout<EventListener>),
 }
 
 impl UpdateFuture {
     fn new(done: EventListener) -> Self {
-        Self {
-            error: None,
-            done: Some(done.timeout(Duration::from_millis(100))),
-        }
+        Self::Done(done
+            .timeout(Duration::from_millis(100))
+        )
     }
 
     fn error(senderr: async_channel::TrySendError<Value>) -> Self {
-        Self {
-            error: Some(senderr),
-            done: None,
-        }
+        Self::Error(senderr)
     }
 }
 
 impl Future for UpdateFuture {
     type Output = Result<(), async_channel::TrySendError<Value>>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>)
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
         -> Poll<Self::Output>
+    where
+        Self: Unpin,
     {
-        // Early return
-        if let Some(error) = self.error {
-            return Poll::Ready(Err(error));
-        }
+        match self.get_mut() {
+            // Early return
+            UpdateFuture::Error(error) => {
+                Poll::Ready(Err(*error))
+            }
 
-        // Are we there yet?
-        if let Some(done) = &mut self.done {
-            let done = Pin::new(done);
-            if let Poll::Ready(_) = done.poll(cx) {
-                return Poll::Ready(Ok(()));
+            // Are we there yet?
+            UpdateFuture::Done(done) =>  {
+                let done = Pin::new(done);
+                done.poll(cx).map(|_| Ok(()))
             }
         }
-
-        // Keep waiting
-        return Poll::Pending;
     }
 }
 

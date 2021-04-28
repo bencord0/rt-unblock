@@ -1,7 +1,12 @@
+use core::{
+    future::Future,
+    task::{Context, Poll},
+    pin::Pin,
+};
 use async_channel::{self as channel, Sender, Receiver};
 use std::sync::atomic::{AtomicBool, Ordering};
 use event_listener::{Event, EventListener};
-use smol_timeout::TimeoutExt;
+use smol_timeout::{Timeout, TimeoutExt};
 use std::time::Duration;
 
 type Value = bool;
@@ -13,9 +18,55 @@ pub struct State {
     rx: Receiver<Value>,
 }
 
+struct UpdateFuture {
+    error: Option<async_channel::TrySendError<Value>>,
+    done: Option<Timeout<EventListener>>,
+}
+
+impl UpdateFuture {
+    fn new(done: EventListener) -> Self {
+        Self {
+            error: None,
+            done: Some(done.timeout(Duration::from_millis(100))),
+        }
+    }
+
+    fn error(senderr: async_channel::TrySendError<Value>) -> Self {
+        Self {
+            error: Some(senderr),
+            done: None,
+        }
+    }
+}
+
+impl Future for UpdateFuture {
+    type Output = Result<(), async_channel::TrySendError<Value>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>)
+        -> Poll<Self::Output>
+    {
+        // Early return
+        if let Some(error) = self.error {
+            return Poll::Ready(Err(error));
+        }
+
+        // Are we there yet?
+        if let Some(done) = &mut self.done {
+            let done = Pin::new(done);
+            if let Poll::Ready(_) = done.poll(cx) {
+                return Poll::Ready(Ok(()));
+            }
+        }
+
+        // Keep waiting
+        return Poll::Pending;
+    }
+}
+
 impl State {
     pub fn new() -> Self {
         let (tx, rx) = channel::bounded(1);
+
         Self{
             value: AtomicBool::new(false),
             done: Event::new(),
@@ -36,17 +87,13 @@ impl State {
 
     pub fn update(&self, value: Value) -> impl Future<Output=Result<(), async_channel::TrySendError<Value>>> {
         let done = self.done.listen();
-        if let Err(senderr) = self.tx.send(value).await {
+        if let Err(senderr) = self.tx.try_send(value) {
             println!("unable to update: {}", senderr);
-            return;
+            return UpdateFuture::error(senderr);
         }
 
         // maybe block until ready
-        if let None = done
-            .timeout(Duration::from_millis(100))
-            .await {
-            println!("waited until timeout");
-        }
+        return UpdateFuture::new(done);
     }
 
     pub async fn run(&self) {

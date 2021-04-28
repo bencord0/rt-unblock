@@ -4,11 +4,13 @@ use event_listener::{Event, EventListener};
 use smol_timeout::TimeoutExt;
 use std::time::Duration;
 
+type Value = bool;
+
 pub struct State {
     value: AtomicBool,
     done: Event,
-    tx: Sender<bool>,
-    rx: Receiver<bool>,
+    tx: Sender<Value>,
+    rx: Receiver<Value>,
 }
 
 impl State {
@@ -26,13 +28,13 @@ impl State {
         value
     }
 
-    pub fn try_update(&self, value: bool)
-        -> Result<(), async_channel::TrySendError<bool>>
+    pub fn try_update(&self, value: Value)
+        -> Result<(), async_channel::TrySendError<Value>>
     {
         self.tx.try_send(value)
     }
 
-    pub async fn update(&self, value: bool) {
+    pub fn update(&self, value: Value) -> impl Future<Output=Result<(), async_channel::TrySendError<Value>>> {
         let done = self.done.listen();
         if let Err(senderr) = self.tx.send(value).await {
             println!("unable to update: {}", senderr);

@@ -79,7 +79,11 @@ impl State {
 #[cfg(test)]
 mod tests {
     use async_std::task;
-    use std::sync::Arc;
+    use std::{
+        sync::Arc,
+        time::Duration,
+    };
+    use smol_timeout::TimeoutExt;
     use super::State;
 
     #[async_std::test]
@@ -87,7 +91,11 @@ mod tests {
         let state = State::new();
         assert!(!state.has_updated());
 
-        state.update(true).await;
+        assert!(state
+            .update(true)
+            .await
+            .is_ok()
+        );
         assert!(!state.has_updated());
     }
 
@@ -106,17 +114,24 @@ mod tests {
         assert!(!state.has_updated());
 
         // blocks until the worker has updated the state
-        state.update(true).await;
+        assert!(state
+            .update(true)
+            .timeout(Duration::from_millis(100))
+            .await.is_some());
         assert!(state.has_updated());
     }
 
     #[async_std::test]
-    async fn update_error() {
+    async fn update_error_without_worker() {
         let state = State::new();
 
         state.close();
-        state.update(true).await;
 
+        assert!(state
+            .update(true)
+            .await
+            .is_err()
+        );
         assert!(!state.has_updated());
     }
 
@@ -133,8 +148,12 @@ mod tests {
         });
 
         state.close();
-        state.update(true).await;
 
+        assert!(state
+            .update(true)
+            .await
+            .is_err()
+        );
         assert!(!state.has_updated());
     }
 
@@ -151,7 +170,9 @@ mod tests {
         // wait for asynchronous work
         task::block_on(state.run_once());
 
-        done.wait();
+        assert!(done
+            .wait_timeout(Duration::from_millis(100))
+        );
         assert!(state.has_updated());
     }
 }
